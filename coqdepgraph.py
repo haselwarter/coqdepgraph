@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys
+import os
 import re
 import subprocess
 
@@ -9,21 +10,21 @@ FILENAME_OUT = "deps-{}.pdf"
 # Some categorical coulor schemes recognised by dot: pastel19, set312
 # http://www.graphviz.org/doc/info/colors.html#brewer
 # A scheme is the name and the number of colours defined by the colour scheme
-COLOUR_SCHEME = ('set312', 12)
 COLOUR_SCHEME = ('pastel19', 9)
+COLOUR_SCHEME = ('set312', 12)
 COLOUR_SCHEME_NAME = COLOUR_SCHEME[0]
 N_COL = COLOUR_SCHEME[1]
 
 BASE_STYLE = "rounded,filled"
 
 def dot_prefix(s):
-    l = re.split('\.[^.]+$', s)
+    l = re.split('\\.[^.]+$', s)
     if len(l) <= 1 :
         return ''
     return l[0]
 
 def dot_split(s):
-    return re.split('\.', s)
+    return re.split('\\.', s)
 
 def all_prefixes(path):
     # only add the empty prefix if we actually start with a direct name
@@ -70,7 +71,12 @@ def key_prefix_count(prefix):
 def sort_prefixes_count(prefixes):
     return sorted(prefixes, key=key_prefix_count)
 
+missing_colours = 0
+merged_prefixes = set()
+
 def colour(prefix, sorted_prefixes):
+    global missing_colours
+    global merged_prefixes
     # if prefix == '' :
     #     return 0
     try :
@@ -80,6 +86,8 @@ def colour(prefix, sorted_prefixes):
         # default to the least-used colour
         return N_COL
     if i > N_COL :
+        missing_colours = missing_colours + 1
+        merged_prefixes.add(prefix)
         return colour(dot_prefix(prefix), sorted_prefixes)
     return i
 
@@ -91,7 +99,7 @@ def rewrite_modules(coqproject=COQPROJECT):
     abbrev = dict()
     with open(coqproject, 'r') as f :
         for l in f.readlines() :
-            x = re.match('^[ \\t]*-Q[ \\t]+(?P<from>\w+)[ \\t]+(?P<to>\w+)$', l)
+            x = re.match('^[ \\t]*-Q[ \\t]+(?P<from>\\w+)[ \\t]+(?P<to>\\w+)$', l)
             if not (x is None) :
                 abbrev[x['from']] = x['to']
     return abbrev
@@ -103,14 +111,15 @@ def deps_from_coq(coqproject=COQPROJECT):
     use_find = True
     with open(coqproject, 'r') as f :
         for l in f.readlines() :
-            x = re.match('^[ \\t]*\S+\\.v', l)
+            x = re.match('^[ \\t]*\\S+\\.v', l)
             if not (x is None) :
                 use_find = False
                 break
     if use_find :
-            coqfiles = subprocess.run(["find", ".", "-iname", "*.v"], capture_output=True).stdout
+            coqfiles = subprocess.run(["find", ".", "-regex", "\\.[0-9a-zA-Z_/]+.v"], capture_output=True).stdout
             coqfiles = coqfiles.decode().splitlines()
             coqfiles = [re.sub('^\\./', '', f) for f in coqfiles]
+            # coqfiles = coqfiles[0:len(coqfiles)]
             # coqfiles = " ".join(coqfiles)
             # coqdep_args.append(coqfiles)
             coqdep_args = coqdep_args + coqfiles
@@ -191,7 +200,17 @@ p_out = subprocess.run(['tred'],
                        text=True, capture_output=True, input=pp_deps_str).stdout
 p_out = subprocess.run(['gvpr', '-c', 'N[outdegree == 0]{shape="doubleoctagon"}'],
                        text=True, capture_output=True, input=p_out).stdout
-p_out = subprocess.run(['gvpr', '-c', 'N[indegree == 0]{penwidth=3}'],
+p_out = subprocess.run(['gvpr', '-c', 'N[indegree == 0]{penwidth=5,color=red}'],
                        text=True, capture_output=True, input=p_out).stdout
+if longest_shared == '' :
+    longest_shared = os.path.basename(os.getcwd())
 with open(FILENAME_OUT.format(longest_shared), 'w') as f_out :
-    subprocess.run(['dot', '-T', 'pdf'], text=True, input=p_out, stdout=f_out)
+    # '-Gnodesep=1',
+    subprocess.run(['dot', '-Granksep=1', '-T', 'pdf'], text=True, input=p_out, stdout=f_out)
+
+if (missing_colours > 0) :
+    print("The colour theme '{}' defines {} colours, {} more colours are needed for full disambiguation.".format(COLOUR_SCHEME_NAME, N_COL, missing_colours))
+    print("Colours: {}".format(colours))
+    print("The following prefixes got merged into their parent: {}".format(sorted(merged_prefixes, key=lambda prefix : (len(dot_split(prefix)), prefix))))
+
+# TODO: try to sort by prefix count only instead of prioritising nesting depth.
